@@ -1,6 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { Document, Packer, Paragraph, ImageRun, PageBreak } from 'docx';
-import { saveAs } from 'file-saver';
 
 // Set up the worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
@@ -21,16 +20,16 @@ interface PageData {
 export async function convertPdfToWord(
   file: File,
   onProgress: (progress: ConversionProgress) => void
-): Promise<void> {
+): Promise<Blob> {
   try {
     // Step 1: Load PDF
-    onProgress({ currentPage: 0, totalPages: 0, status: 'loading', message: 'Loading PDF...' });
+    onProgress({ currentPage: 0, totalPages: 0, status: 'loading', message: 'Загрузка PDF...' });
     
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     const totalPages = pdf.numPages;
     
-    onProgress({ currentPage: 0, totalPages, status: 'rendering', message: 'Rendering pages...' });
+    onProgress({ currentPage: 0, totalPages, status: 'rendering', message: 'Рендеринг страниц...' });
     
     // Step 2: Render each page as an image
     const pages: PageData[] = [];
@@ -40,7 +39,7 @@ export async function convertPdfToWord(
         currentPage: pageNum,
         totalPages,
         status: 'rendering',
-        message: `Rendering page ${pageNum} of ${totalPages}...`
+        message: `Рендеринг страницы ${pageNum} из ${totalPages}...`
       });
       
       const page = await pdf.getPage(pageNum);
@@ -81,7 +80,7 @@ export async function convertPdfToWord(
       currentPage: totalPages,
       totalPages,
       status: 'building',
-      message: 'Building Word document...'
+      message: 'Сборка документа Word...'
     });
     
     const children: (Paragraph | any)[] = [];
@@ -130,24 +129,24 @@ export async function convertPdfToWord(
       }],
     });
     
-    // Step 4: Generate and download
+    // Step 4: Generate blob
     onProgress({
       currentPage: totalPages,
       totalPages,
       status: 'building',
-      message: 'Generating file...'
+      message: 'Генерация файла...'
     });
     
     const blobDocx = await Packer.toBlob(doc);
-    const outputName = file.name.replace(/\.pdf$/i, '') + '_converted.docx';
-    saveAs(blobDocx, outputName);
     
     onProgress({
       currentPage: totalPages,
       totalPages,
       status: 'done',
-      message: '✅ Done! File downloaded successfully.'
+      message: '✅ Готово! Нажмите "Скачать файл Word".'
     });
+    
+    return blobDocx;
     
   } catch (error) {
     console.error('Conversion error:', error);
@@ -155,7 +154,7 @@ export async function convertPdfToWord(
       currentPage: 0,
       totalPages: 0,
       status: 'error',
-      message: `❌ Error: ${(error as Error).message}`
+      message: `❌ Ошибка: ${(error as Error).message}`
     });
     throw error;
   }
