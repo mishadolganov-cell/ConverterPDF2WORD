@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
 import { convertPdfToWord, ConversionProgress } from './converter';
-import { saveAs } from 'file-saver';
 
 function App() {
   const [file, setFile] = useState<File | null>(null);
@@ -43,11 +42,11 @@ function App() {
 
   const handleConvert = async () => {
     if (!file) return;
-    
+
     setIsConverting(true);
     setWordBlob(null);
     setProgress({ currentPage: 0, totalPages: 0, status: 'loading', message: 'Начало конвертации...' });
-    
+
     try {
       const blob = await convertPdfToWord(file, (p) => setProgress(p));
       setWordBlob(blob);
@@ -60,9 +59,21 @@ function App() {
   };
 
   const handleDownload = () => {
-    if (wordBlob) {
-      saveAs(wordBlob, outputFileName);
-    }
+    if (!wordBlob) return;
+
+    // Нативный способ скачивания через URL.createObjectURL
+    const url = URL.createObjectURL(wordBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = outputFileName;
+    document.body.appendChild(a);
+    a.click();
+    
+    // Очистка
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
   };
 
   const handleReset = () => {
@@ -141,7 +152,7 @@ function App() {
               onChange={handleFileSelect}
               className="hidden"
             />
-            
+
             <div className="flex flex-col items-center gap-4">
               <div className={`
                 w-20 h-20 rounded-2xl flex items-center justify-center transition-all duration-300
@@ -151,7 +162,7 @@ function App() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                 </svg>
               </div>
-              
+
               <div>
                 <p className="text-lg font-medium text-white mb-1">
                   {dragOver ? 'Отпустите PDF файл' : 'Загрузите PDF файл'}
@@ -230,7 +241,7 @@ function App() {
                     <p className="text-xs text-gray-400">{outputFileName} • {(wordBlob.size / 1024 / 1024).toFixed(2)} MB</p>
                   </div>
                 </div>
-                
+
                 <button
                   onClick={handleDownload}
                   className="w-full px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-semibold rounded-xl shadow-lg shadow-green-500/25 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3"
@@ -238,7 +249,7 @@ function App() {
                   <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
-                  <span>Скачать файл Word</span>
+                  <span>📥 Скачать файл Word</span>
                 </button>
               </div>
             )}
@@ -258,7 +269,7 @@ function App() {
                   </span>
                 </button>
               )}
-              
+
               {progress?.status === 'done' && (
                 <button
                   onClick={handleReset}
@@ -302,7 +313,7 @@ function App() {
             <h3 className="text-white font-medium text-sm mb-1">100% Приватно</h3>
             <p className="text-xs text-gray-400">Вся обработка происходит в вашем браузере. Файлы никуда не загружаются.</p>
           </div>
-          
+
           <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
             <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center mb-3">
               <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -312,7 +323,7 @@ function App() {
             <h3 className="text-white font-medium text-sm mb-1">Высокое качество</h3>
             <p className="text-xs text-gray-400">Страницы рендерятся при 200 DPI для чёткого результата.</p>
           </div>
-          
+
           <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
             <div className="w-9 h-9 rounded-lg bg-purple-500/20 flex items-center justify-center mb-3">
               <svg className="w-5 h-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
