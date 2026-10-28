@@ -6,7 +6,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs
 export interface ConversionProgress {
   currentPage: number;
   totalPages: number;
-  status: 'loading' | 'analyzing' | 'building' | 'done' | 'error';
+  status: 'loading' | 'analyzing' | 'rendering' | 'building' | 'done' | 'error';
   message: string;
 }
 
@@ -18,27 +18,155 @@ interface TextItem {
   height: number;
   fontSize: number;
   fontName: string;
+  color?: string;
   isBold: boolean;
   isItalic: boolean;
 }
 
-interface Line {
+interface TextLine {
   items: TextItem[];
   y: number;
-  maxHeight: number;
+  height: number;
+  indent: number;
+}
+
+interface TextBlock {
+  lines: TextLine[];
+  alignment: 'left' | 'center' | 'right' | 'both' | 'start' | 'end';
 }
 
 interface ExtractedImage {
-  imageData: Uint8Array;
+  data: Uint8Array;
+  x: number;
+  y: number;
   width: number;
   height: number;
 }
 
-interface PageStructure {
-  lines: Line[];
+interface PageContent {
+  blocks: TextBlock[];
   images: ExtractedImage[];
-  pageWidth: number;
-  pageHeight: number;
+  width: number;
+  height: number;
+}
+
+// Определение стиля шрифта по имени
+function analyzeFont(fontName: string): { isBold: boolean; isItalic: boolean } {
+  const name = fontName.toLowerCase();
+  return {
+    isBold: name.includes('bold') || name.includes('black') || name.includes('heavy'),
+    isItalic: name.includes('italic') || name.includes('oblique'),
+  };
+}
+
+// Группировка текстовых элементов в строки
+function groupIntoLines(items: TextItem[], tolerance: number = 2): TextLine[] {
+  if (items.length === 0) return [];
+
+  // Сортируем по Y (сверху вниз)
+  const sorted = [...items].sort((a, b) => b.y - a.y);
+  
+  const lines: TextLine[] = [];
+  let currentLine: TextItem[] = [];
+  let currentY = sorted[0].y;
+  let currentHeight = sorted[0].height;
+
+  for (const item of sorted) {
+    if (Math.abs(item.y - currentY) <= tolerance) {
+      currentLine.push(item);
+      currentHeight = Math.max(currentHeight, item.height);
+    } else {
+      if (currentLine.length > 0) {
+        // Сортируем элементы в строке по X
+        currentLine.sort((a, b) => a.x - b.x);
+        lines.push({
+          items: currentLine,
+          y: currentY,
+          height: currentHeight,
+          indent: currentLine[0].x,
+        });
+      }
+      currentLine = [item];
+      currentY = item.y;
+      currentHeight = item.height;
+    }
+  }
+
+  if (currentLine.length > 0) {
+    currentLine.sort((a, b) => a.x - b.x);
+    lines.push({
+      items: currentLine,
+      y: currentY,
+      height: currentHeight,
+      indent: currentLine[0].x,
+    });
+  }
+
+  return lines;
+}
+
+// Группировка строк в абзацы
+function groupIntoBlocks(lines: TextLine[], pageWidth: number): TextBlock[] {
+  if (lines.length === 0) return [];
+
+  const blocks: TextBlock[] = [];
+  let currentBlock: TextLine[] = [];
+  let lastIndent = lines[0].indent;
+  let lastY = lines[0].y;
+  let lastHeight = lines[0].height;
+
+  for (const line of lines) {
+    const verticalGap = Math.abs(lastY - line.y);
+    const indentDiff = Math.abs(line.indent - lastIndent);
+    const heightDiff = Math.abs(line.height - lastHeight);
+
+    // Определяем, начинается ли новый абзац
+    const isNewParagraph = 
+      verticalGap > lastHeight * 1.5 || // Большой вертикальный отступ
+      indentDiff > pageWidth * 0.05 || // Значительный отступ слева
+      heightDiff > lastHeight * 0.3; // Изменение размера шрифта
+
+    if (isNewParagraph && currentBlock.length > 0) {
+      // Определяем выравнивание
+      const avgIndent = currentBlock.reduce((sum, l) => sum + l.indent, 0) / currentBlock.length;
+      let alignment: 'left' | 'center' | 'right' = 'left';
+      
+      if (avgIndent > pageWidth * 0.3) {
+        alignment = 'center';
+      } else if (avgIndent > pageWidth * 0.5) {
+        alignment = 'right';
+      }
+
+      blocks.push({
+        lines: currentBlock,
+        alignment,
+      });
+      currentBlock = [];
+    }
+
+    currentBlock.push(line);
+    lastIndent = line.indent;
+    lastY = line.y;
+    lastHeight = line.height;
+  }
+
+  if (currentBlock.length > 0) {
+    const avgIndent = currentBlock.reduce((sum, l) => sum + l.indent, 0) / currentBlock.length;
+    let alignment: 'left' | 'center' | 'right' = 'left';
+    
+    if (avgIndent > pageWidth * 0.3) {
+      alignment = 'center';
+    } else if (avgIndent > pageWidth * 0.5) {
+      alignment = 'right';
+    }
+
+    blocks.push({
+      lines: currentBlock,
+      alignment,
+    });
+  }
+
+  return blocks;
 }
 
 export async function convertPdfToWordFormatted(
@@ -52,73 +180,48 @@ export async function convertPdfToWordFormatted(
     const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
     const totalPages = pdf.numPages;
 
-    onProgress({ currentPage: 0, totalPages, status: 'analyzing', message: 'Анализ структуры документа...' });
+    onProgress({ currentPage: 0, totalPages, status: 'analyzing', message: 'Анализ форматирования...' });
 
-    const pages: PageStructure[] = [];
+    const pagesContent: PageContent[] = [];
 
     for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
       onProgress({
         currentPage: pageNum,
         totalPages,
         status: 'analyzing',
-        message: `Анализ страницы ${pageNum} из ${totalPages}...`
+        message: `Страница ${pageNum}: анализ текста...`
       });
 
       const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale: 1 });
 
-      // Извлекаем текст с координатами и стилями
+      // Извлекаем текст с форматированием
       const textContent = await page.getTextContent();
       const textItems: TextItem[] = [];
 
       for (const item of textContent.items as any[]) {
-        if (!item.str || !item.transform) continue;
+        if (!item.str || item.str.trim() === '') continue;
 
-        const fontSize = Math.abs(item.transform[0]) || item.height;
-        const fontName = item.fontName || '';
-        const isBold = fontName.toLowerCase().includes('bold') || fontName.toLowerCase().includes('black');
-        const isItalic = fontName.toLowerCase().includes('italic') || fontName.toLowerCase().includes('oblique');
+        const transform = item.transform;
+        const fontSize = Math.abs(transform[0]) || item.height;
+        const fontAnalysis = analyzeFont(item.fontName);
 
         textItems.push({
           str: item.str,
-          x: item.transform[4],
-          y: viewport.height - item.transform[5], // Инвертируем Y (PDF начинается снизу)
+          x: transform[4],
+          y: transform[5],
           width: item.width,
-          height: fontSize,
+          height: item.height,
           fontSize: fontSize,
-          fontName: fontName,
-          isBold: isBold,
-          isItalic: isItalic,
+          fontName: item.fontName,
+          isBold: fontAnalysis.isBold,
+          isItalic: fontAnalysis.isItalic,
         });
       }
 
-      // Группируем текст по строкам (элементы с похожей Y-координатой)
-      const lines: Line[] = [];
-      const sortedItems = [...textItems].sort((a, b) => a.y - b.y || a.x - b.x);
-
-      let currentLine: Line | null = null;
-      const lineThreshold = 2; // Порог для группировки по Y
-
-      for (const item of sortedItems) {
-        if (!currentLine || Math.abs(item.y - currentLine.y) > lineThreshold) {
-          // Новая строка
-          currentLine = {
-            items: [item],
-            y: item.y,
-            maxHeight: item.height,
-          };
-          lines.push(currentLine);
-        } else {
-          // Добавляем в текущую строку
-          currentLine.items.push(item);
-          currentLine.maxHeight = Math.max(currentLine.maxHeight, item.height);
-        }
-      }
-
-      // Сортируем элементы внутри каждой строки по X
-      for (const line of lines) {
-        line.items.sort((a, b) => a.x - b.x);
-      }
+      // Группируем в строки и абзацы
+      const lines = groupIntoLines(textItems);
+      const blocks = groupIntoBlocks(lines, viewport.width);
 
       // Извлекаем изображения
       const images: ExtractedImage[] = [];
@@ -143,9 +246,10 @@ export async function convertPdfToWordFormatted(
               });
 
               const uint8 = new Uint8Array(await blob.arrayBuffer());
-
               images.push({
-                imageData: uint8,
+                data: uint8,
+                x: 0, // Позицию сложно определить из operatorList
+                y: 0,
                 width: img.width,
                 height: img.height,
               });
@@ -159,89 +263,81 @@ export async function convertPdfToWordFormatted(
         }
       }
 
-      pages.push({
-        lines,
+      pagesContent.push({
+        blocks,
         images,
-        pageWidth: viewport.width,
-        pageHeight: viewport.height,
+        width: viewport.width,
+        height: viewport.height,
       });
     }
 
-    // Создаём Word документ с сохранением форматирования
+    // Создаём Word документ
     onProgress({
       currentPage: totalPages,
       totalPages,
       status: 'building',
-      message: 'Сборка документа Word с форматированием...'
+      message: 'Сборка документа Word...'
     });
 
     const children: Paragraph[] = [];
 
-    for (let i = 0; i < pages.length; i++) {
-      const pageData = pages[i];
-      const pageWidthPt = 450; // Ширина страницы Word в пунктах (~6.25 дюйма)
-      const scale = pageWidthPt / pageData.pageWidth;
+    for (let i = 0; i < pagesContent.length; i++) {
+      const pageData = pagesContent[i];
 
-      // Обрабатываем каждую строку
-      for (const line of pageData.lines) {
-        const textRuns: TextRun[] = [];
-        let prevX = 0;
+      // Добавляем текстовые блоки
+      for (const block of pageData.blocks) {
+        for (const line of block.lines) {
+          const textRuns: TextRun[] = [];
 
-        for (const item of line.items) {
-          // Добавляем пробелы для имитации позиции
-          const gap = item.x - prevX;
-          if (gap > 5 && textRuns.length > 0) {
-            const spaces = Math.round(gap / 3);
-            if (spaces > 0) {
-              textRuns.push(new TextRun({ text: ' '.repeat(spaces), size: Math.round(item.fontSize * 2) }));
-            }
-          }
-
-          // Создаём TextRun с форматированием
-          textRuns.push(
-            new TextRun({
+          for (const item of line.items) {
+            const runOptions: any = {
               text: item.str,
-              size: Math.round(item.fontSize * 2), // Конвертируем в half-points
+              size: Math.round(item.fontSize * 2), // конвертируем в half-points
               bold: item.isBold,
               italics: item.isItalic,
-            })
-          );
+            };
 
-          prevX = item.x + item.width;
-        }
+            if (item.color) {
+              runOptions.color = item.color;
+            }
 
-        if (textRuns.length > 0) {
-          // Определяем выравнивание по позиции первого элемента
-          const firstItem = line.items[0];
-          let alignment: typeof AlignmentType.LEFT | typeof AlignmentType.CENTER | typeof AlignmentType.RIGHT = AlignmentType.LEFT;
-          
-          if (firstItem.x > pageData.pageWidth * 0.4) {
-            alignment = AlignmentType.RIGHT;
-          } else if (firstItem.x > pageData.pageWidth * 0.25) {
-            alignment = AlignmentType.CENTER;
+            textRuns.push(new TextRun(runOptions));
           }
 
-          children.push(
-            new Paragraph({
-              children: textRuns,
-              alignment: alignment,
-              spacing: {
-                after: Math.round(line.maxHeight * scale * 0.5),
-                line: Math.round(line.maxHeight * scale * 2.4),
-              },
-            })
-          );
+          if (textRuns.length > 0) {
+            children.push(
+              new Paragraph({
+                children: textRuns,
+                alignment: block.alignment,
+                spacing: {
+                  after: 100,
+                  line: 276, // 1.15 межстрочный интервал
+                },
+                indent: {
+                  left: Math.round(line.indent * 20), // конвертируем в twips
+                },
+              })
+            );
+          }
         }
+
+        // Добавляем пустую строку между абзацами
+        children.push(
+          new Paragraph({
+            children: [],
+            spacing: { after: 100 },
+          })
+        );
       }
 
-      // Добавляем изображения в конце страницы
+      // Добавляем изображения
       for (const img of pageData.images) {
-        const maxWidth = pageWidthPt;
-        const imgScale = Math.min(1, maxWidth / img.width);
-        const scaledWidth = Math.round(img.width * imgScale);
-        const scaledHeight = Math.round(img.height * imgScale);
+        const maxWidth = 450;
+        const scale = Math.min(1, maxWidth / img.width);
+        const scaledWidth = Math.round(img.width * scale);
+        const scaledHeight = Math.round(img.height * scale);
 
-        const data = img.imageData;
+        const data = img.data;
         const imageRun = new ImageRun({
            data,
           transformation: {
@@ -260,7 +356,7 @@ export async function convertPdfToWordFormatted(
       }
 
       // Разрыв страницы
-      if (i < pages.length - 1) {
+      if (i < pagesContent.length - 1) {
         children.push(
           new Paragraph({
             children: [new PageBreak()],
