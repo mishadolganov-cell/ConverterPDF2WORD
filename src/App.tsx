@@ -354,36 +354,7 @@ function App() {
           </div>
         </div>
 
-        {/* Python Code Reference */}
-        <div className="mt-8 bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-6">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
-            <h3 className="text-white font-medium text-sm">Эквивалентный Python код</h3>
-          </div>
-          <pre className="text-xs text-gray-400 overflow-x-auto bg-black/30 rounded-lg p-4 font-mono leading-relaxed">
-{`import fitz  # PyMuPDF
-from docx import Document
-from docx.shared import Inches
-import os
 
-def pdf_to_word_as_images(pdf_path, docx_path):
-    doc = fitz.open(pdf_path)
-    word_doc = Document()
-    
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        mat = fitz.Matrix(200/72, 200/72)
-        pix = page.get_pixmap(matrix=mat)
-        img_filename = f"page_{page_num + 1}.png"
-        pix.save(img_filename)
-        word_doc.add_picture(img_filename, width=Inches(6.0))
-        word_doc.add_page_break()
-        os.remove(img_filename)
-    
-    word_doc.save(docx_path)
-    print(f"✅ Готово! Сохранено в {docx_path}")`}
-          </pre>
-        </div>
       </main>
 
       {/* Footer */}
