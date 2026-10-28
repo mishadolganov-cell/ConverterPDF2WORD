@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { convertPdfToWord, ConversionProgress } from './converter';
 
 function App() {
@@ -6,9 +6,19 @@ function App() {
   const [dragOver, setDragOver] = useState(false);
   const [progress, setProgress] = useState<ConversionProgress | null>(null);
   const [isConverting, setIsConverting] = useState(false);
-  const [wordBlob, setWordBlob] = useState<Blob | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [outputFileName, setOutputFileName] = useState<string>('');
+  const [fileSize, setFileSize] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Очистка blob URL при размонтировании или сбросе
+  useEffect(() => {
+    return () => {
+      if (downloadUrl) {
+        URL.revokeObjectURL(downloadUrl);
+      }
+    };
+  }, [downloadUrl]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -27,60 +37,53 @@ function App() {
     if (droppedFile && droppedFile.type === 'application/pdf') {
       setFile(droppedFile);
       setProgress(null);
-      setWordBlob(null);
+      if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+      setDownloadUrl(null);
     }
-  }, []);
+  }, [downloadUrl]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       setFile(selectedFile);
       setProgress(null);
-      setWordBlob(null);
+      if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+      setDownloadUrl(null);
     }
-  }, []);
+  }, [downloadUrl]);
 
   const handleConvert = async () => {
     if (!file) return;
 
     setIsConverting(true);
-    setWordBlob(null);
+    if (downloadUrl) {
+      URL.revokeObjectURL(downloadUrl);
+      setDownloadUrl(null);
+    }
     setProgress({ currentPage: 0, totalPages: 0, status: 'loading', message: 'Начало конвертации...' });
 
     try {
-      const blob = await convertPdfToWord(file, (p) => setProgress(p));
-      setWordBlob(blob);
+      const result = await convertPdfToWord(file, (p) => setProgress(p));
+      setDownloadUrl(result.url);
+      setFileSize(result.blob.size);
       setOutputFileName(file.name.replace(/\.pdf$/i, '') + '_converted.docx');
-    } catch {
-      // Error is handled in the progress callback
+    } catch (err) {
+      console.error('Conversion failed:', err);
+      alert(`Ошибка конвертации: ${(err as Error).message}`);
     } finally {
       setIsConverting(false);
     }
   };
 
-  const handleDownload = () => {
-    if (!wordBlob) return;
-
-    // Нативный способ скачивания через URL.createObjectURL
-    const url = URL.createObjectURL(wordBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = outputFileName;
-    document.body.appendChild(a);
-    a.click();
-    
-    // Очистка
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-  };
-
   const handleReset = () => {
+    if (downloadUrl) {
+      URL.revokeObjectURL(downloadUrl);
+    }
     setFile(null);
     setProgress(null);
-    setWordBlob(null);
+    setDownloadUrl(null);
     setOutputFileName('');
+    setFileSize(0);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -228,7 +231,8 @@ function App() {
             )}
 
             {/* Download Button - shown when conversion is done */}
-            {wordBlob && progress?.status === 'done' && (
+            {/* Используем <a> тег вместо <button> для надёжного скачивания в iframe */}
+            {downloadUrl && progress?.status === 'done' && (
               <div className="mb-6 bg-green-500/10 border border-green-500/30 rounded-xl p-5">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center flex-shrink-0">
@@ -238,25 +242,40 @@ function App() {
                   </div>
                   <div>
                     <p className="text-green-300 font-medium text-sm">Конвертация завершена!</p>
-                    <p className="text-xs text-gray-400">{outputFileName} • {(wordBlob.size / 1024 / 1024).toFixed(2)} MB</p>
+                    <p className="text-xs text-gray-400">{outputFileName} • {(fileSize / 1024 / 1024).toFixed(2)} MB</p>
                   </div>
                 </div>
 
-                <button
-                  onClick={handleDownload}
-                  className="w-full px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-semibold rounded-xl shadow-lg shadow-green-500/25 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3"
-                >
-                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  <span>📥 Скачать файл Word</span>
-                </button>
+                <div className="flex flex-col gap-3">
+                  {/* Основная кнопка — ссылка с download атрибутом */}
+                  <a
+                    href={downloadUrl}
+                    download={outputFileName}
+                    className="w-full px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-semibold rounded-xl shadow-lg shadow-green-500/25 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3 cursor-pointer no-underline text-center"
+                  >
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    <span>📥 Скачать файл Word</span>
+                  </a>
+
+                  {/* Fallback кнопка — открыть в новой вкладке */}
+                  <button
+                    onClick={() => window.open(downloadUrl, '_blank')}
+                    className="w-full px-6 py-3 bg-white/10 hover:bg-white/20 text-white font-medium rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                    <span>Открыть файл в новой вкладке</span>
+                  </button>
+                </div>
               </div>
             )}
 
             {/* Action Buttons */}
             <div className="flex gap-3">
-              {!isConverting && !wordBlob && (
+              {!isConverting && !downloadUrl && (
                 <button
                   onClick={handleConvert}
                   className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-medium rounded-xl shadow-lg shadow-purple-500/25 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"

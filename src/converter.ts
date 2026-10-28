@@ -20,7 +20,7 @@ interface PageData {
 export async function convertPdfToWord(
   file: File,
   onProgress: (progress: ConversionProgress) => void
-): Promise<Blob> {
+): Promise<{ blob: Blob; url: string }> {
   try {
     // Step 1: Load PDF
     onProgress({ currentPage: 0, totalPages: 0, status: 'loading', message: 'Загрузка PDF...' });
@@ -43,8 +43,6 @@ export async function convertPdfToWord(
       });
 
       const page = await pdf.getPage(pageNum);
-
-      // Render at 200 DPI (similar to the Python script's 200/72 scale)
       const scale = 200 / 72;
       const viewport = page.getViewport({ scale });
 
@@ -70,7 +68,6 @@ export async function convertPdfToWord(
         height: canvas.height,
       });
 
-      // Clean up canvas
       canvas.width = 0;
       canvas.height = 0;
     }
@@ -84,18 +81,13 @@ export async function convertPdfToWord(
     });
 
     const children: Paragraph[] = [];
-
-    // Target width in the Word document (in points, ~6 inches = 432 points)
     const targetWidthPt = 432;
 
     for (let i = 0; i < pages.length; i++) {
       const pageData = pages[i];
-
-      // Calculate proportional height based on actual page aspect ratio
       const aspectRatio = pageData.height / pageData.width;
       const targetHeightPt = Math.round(targetWidthPt * aspectRatio);
 
-      // Add the page image
       children.push(
         new Paragraph({
           children: [
@@ -112,7 +104,6 @@ export async function convertPdfToWord(
         })
       );
 
-      // Add page break after each page (except the last)
       if (i < pages.length - 1) {
         children.push(
           new Paragraph({
@@ -129,7 +120,7 @@ export async function convertPdfToWord(
       }],
     });
 
-    // Step 4: Generate blob using toBlob (browser-friendly method)
+    // Step 4: Generate blob
     onProgress({
       currentPage: totalPages,
       totalPages,
@@ -137,7 +128,11 @@ export async function convertPdfToWord(
       message: 'Генерация файла...'
     });
 
+    // Используем toBlob для браузерной среды
     const blob = await Packer.toBlob(doc);
+
+    // Создаём URL для скачивания
+    const url = URL.createObjectURL(blob);
 
     onProgress({
       currentPage: totalPages,
@@ -146,7 +141,7 @@ export async function convertPdfToWord(
       message: '✅ Готово! Нажмите "Скачать файл Word".'
     });
 
-    return blob;
+    return { blob, url };
 
   } catch (error) {
     console.error('Conversion error:', error);
