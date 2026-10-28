@@ -2,9 +2,10 @@ import { useState } from 'react';
 import App from './App';
 import App2 from './App2';
 import App3 from './App3';
+import App4 from './App4';
 
 function MainApp() {
-  const [mode, setMode] = useState<'image' | 'text' | 'hybrid'>('image');
+  const [mode, setMode] = useState<'image' | 'text' | 'hybrid' | 'format'>('image');
 
   return (
     <div className="relative">
@@ -40,10 +41,20 @@ function MainApp() {
         >
           🔀 Текст + Скриншоты
         </button>
+        <button
+          onClick={() => setMode('format')}
+          className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+            mode === 'format'
+              ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
+              : 'text-gray-400 hover:text-white'
+          }`}
+        >
+          📐 С форматом
+        </button>
       </div>
 
       {/* Content */}
-      {mode === 'image' ? <App /> : mode === 'text' ? <App2 /> : <App3 />}
+      {mode === 'image' ? <App /> : mode === 'text' ? <App2 /> : mode === 'hybrid' ? <App3 /> : <App4 />}
     </div>
   );
 }
